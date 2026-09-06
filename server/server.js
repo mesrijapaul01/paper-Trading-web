@@ -352,7 +352,21 @@ app.get(
   })
 );
 
-app.get("/", (req, res) => res.send("Trading API running 🚀"));
+// In production, the built React app is served directly from this same
+// Express server — this means the frontend's relative fetch("/login") etc.
+// calls hit this same origin automatically, with no separate API URL
+// config or CORS setup needed. The CRA dev "proxy" trick only works
+// locally, so this is what makes the deployed site actually work.
+if (process.env.NODE_ENV === "production") {
+  const path = require("path");
+  const clientBuildPath = path.join(__dirname, "../client/build");
+  app.use(express.static(clientBuildPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(clientBuildPath, "index.html"));
+  });
+} else {
+  app.get("/", (req, res) => res.send("Trading API running 🚀"));
+}
 
 // --- Real live price feed + limit order engine ---
 // Replaces the old Math.random() simulated feed. Now polls CoinGecko for
