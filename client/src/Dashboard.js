@@ -20,7 +20,12 @@ import { useAuth } from "./context/AuthContext";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5000";
+// Same reasoning as useLiveChartData.js: production serves frontend and
+// backend from one origin, so no URL means "connect to wherever this page
+// was loaded from." Local dev needs the explicit localhost:5000 address.
+const SOCKET_URL =
+  process.env.REACT_APP_SOCKET_URL ||
+  (process.env.NODE_ENV === "production" ? undefined : "http://localhost:5000");
 
 function Dashboard() {
   const { token, email: userEmail, logout } = useAuth();
@@ -69,7 +74,7 @@ function Dashboard() {
   // Live-refresh when a pending limit order fills on the server, so the
   // dashboard updates without the user having to do anything.
   useEffect(() => {
-    const socket = io(SOCKET_URL);
+    const socket = SOCKET_URL ? io(SOCKET_URL) : io();
     socket.on("orderFilled", () => {
       notify("A pending limit order just filled", "success");
       fetchAll();

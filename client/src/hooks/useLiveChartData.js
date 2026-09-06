@@ -1,9 +1,16 @@
 import { useState, useEffect } from "react";
 import { io } from "socket.io-client";
 
-// Configurable so this doesn't have to be edited by hand for non-local
-// deployments — falls back to localhost:5000 for local dev.
-const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || "http://localhost:5000";
+// In production, the frontend and backend are served from the same
+// origin (Express serves the React build directly — see server.js), so
+// the socket should connect to "wherever this page was loaded from,"
+// not a hardcoded address. Passing no URL to io() does exactly that.
+// Locally, the React dev server (port 3000) and backend (port 5000) are
+// different origins, so local dev still needs the explicit localhost:5000
+// address (or REACT_APP_SOCKET_URL as an escape hatch for anything else).
+const SOCKET_URL =
+  process.env.REACT_APP_SOCKET_URL ||
+  (process.env.NODE_ENV === "production" ? undefined : "http://localhost:5000");
 
 export default function useLiveChartData() {
   const [chartData, setChartData] = useState({
@@ -14,7 +21,7 @@ export default function useLiveChartData() {
   });
 
   useEffect(() => {
-    const socket = io(SOCKET_URL);
+    const socket = SOCKET_URL ? io(SOCKET_URL) : io();
     socket.on("chartData", (data) => {
       setChartData(data); // replace with full history each tick
     });
