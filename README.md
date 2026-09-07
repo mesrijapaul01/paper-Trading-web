@@ -7,7 +7,7 @@ React, Node/Express, MongoDB, and Socket.IO.
 
 ## 🔴 Live demo
 
-**[http://3.107.7.140:5000](http://3.107.7.140:5000)**
+**[http://3.24.113.99:5000](http://3.24.113.99:5000)**
 
 Register a free account (fake money only) or use the demo account to try
 placing market and limit orders, and watch the order book / live price
