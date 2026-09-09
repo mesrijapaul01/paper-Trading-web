@@ -39,6 +39,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState(null); // { text, type: "success" | "error" }
   const [chartTab, setChartTab] = useState("price"); // "price" | "indicators" | "pnl"
+  const [indicatorAsset, setIndicatorAsset] = useState("BTC"); // which asset the Indicators tab shows
 
   const authHeaders = { Authorization: `Bearer ${token}` };
 
@@ -125,8 +126,12 @@ function Dashboard() {
   };
 
   // --- Client-computed indicators from this user's own trades ---
-  const prices = trades.map((t) => t.price).reverse(); // trades are newest-first; indicators want chronological order
+  // Filtered to one asset at a time — mixing BTC (~$80,000) and ETH
+  // (~$2,500) prices on one shared line made the chart look like a crash
+  // when it was really just two very different price scales overlapping.
   const chronoTrades = [...trades].reverse();
+  const assetTrades = chronoTrades.filter((t) => t.asset === indicatorAsset);
+  const prices = assetTrades.map((t) => t.price);
 
   const emaPeriod = 5;
   const ema =
@@ -155,9 +160,9 @@ function Dashboard() {
       : "—";
 
   const indicatorChartData = {
-    labels: chronoTrades.map((t) => formatTime(t.createdAt)),
+    labels: assetTrades.map((t) => formatTime(t.createdAt)),
     datasets: [
-      { label: "Price", data: prices, borderColor: "#38bdf8", fill: false },
+      { label: `${indicatorAsset} Price`, data: prices, borderColor: "#38bdf8", fill: false },
       { label: `EMA (${emaPeriod})`, data: ema, borderColor: "#4ade80", fill: false },
       { label: `RSI (${rsiPeriod})`, data: rsi, borderColor: "#fb923c", fill: false, yAxisID: "y2" },
     ],
@@ -368,12 +373,21 @@ function Dashboard() {
           </button>
         </div>
 
+        {chartTab === "indicators" && (
+          <div style={{ marginBottom: 12 }}>
+            <select value={indicatorAsset} onChange={(e) => setIndicatorAsset(e.target.value)}>
+              <option value="BTC">BTC</option>
+              <option value="ETH">ETH</option>
+            </select>
+          </div>
+        )}
+
         {chartTab === "price" && <PriceChart />}
         {chartTab === "indicators" &&
-          (chronoTrades.length > 0 ? (
+          (assetTrades.length > 0 ? (
             <Line data={indicatorChartData} options={indicatorChartOptions} />
           ) : (
-            <p className="muted">Place some trades to see indicators.</p>
+            <p className="muted">No {indicatorAsset} trades yet — place one to see indicators.</p>
           ))}
         {chartTab === "pnl" &&
           (chronoTrades.length > 0 ? (
