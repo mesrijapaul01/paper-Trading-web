@@ -16,6 +16,7 @@ import {
 import { EMA, RSI } from "technicalindicators";
 import PriceChart from "./components/PriceChart";
 import OrderBookDepth from "./components/OrderBookDepth";
+import Strategies from "./components/Strategies";
 import { useAuth } from "./context/AuthContext";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
@@ -239,6 +240,10 @@ function Dashboard() {
 
       <section className="card">
         <TradeForm onSave={handleSaveTrade} />
+      </section>
+
+      <section className="card">
+        <Strategies notify={notify} />
       </section>
 
       {orders.length > 0 && (

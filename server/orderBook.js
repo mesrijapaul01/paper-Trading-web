@@ -50,6 +50,7 @@ async function executeFill(db, io, buyOrder, sellOrder, amount, price) {
       amount,
       price,
       orderType: buyOrder.orderType,
+      strategyId: buyOrder.strategyId || null, // tags trades placed by an automated strategy, null for manual trades
       executed: true,
       createdAt: new Date(),
     });
@@ -64,6 +65,7 @@ async function executeFill(db, io, buyOrder, sellOrder, amount, price) {
       amount,
       price,
       orderType: sellOrder.orderType,
+      strategyId: sellOrder.strategyId || null,
       executed: true,
       createdAt: new Date(),
     });

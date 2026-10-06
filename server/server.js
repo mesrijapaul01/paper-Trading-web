@@ -11,6 +11,14 @@ const axios = require("axios");
 
 const createVerifyToken = require("./middleware/auth");
 const { getHoldings, getAvailableBalance, getAvailableHoldings, matchNewOrder, refreshMarketMakerQuotes } = require("./orderBook");
+const {
+  createStrategy,
+  listStrategies,
+  setStrategyStatus,
+  deleteStrategy,
+  runDueStrategies,
+  getStrategyPerformance,
+} = require("./strategies");
 
 const app = express();
 const server = http.createServer(app);
@@ -352,6 +360,87 @@ app.get(
   })
 );
 
+// --- Automated strategies (DCA) ---
+app.post(
+  "/strategies",
+  verifyToken,
+  asyncHandler(async (req, res) => {
+    const { asset, amountPerTradeUsd, intervalMinutes } = req.body;
+    const upperAsset = String(asset || "").toUpperCase();
+
+    if (!["BTC", "ETH"].includes(upperAsset)) {
+      return res.status(400).json({ message: "✗ Only BTC and ETH are supported right now" });
+    }
+    if (!amountPerTradeUsd || amountPerTradeUsd <= 0) {
+      return res.status(400).json({ message: "✗ amountPerTradeUsd must be a positive number" });
+    }
+    if (!intervalMinutes || intervalMinutes <= 0) {
+      return res.status(400).json({ message: "✗ intervalMinutes must be a positive number" });
+    }
+
+    const user = await db.collection("users").findOne({ _id: new ObjectId(req.userId) });
+    if (!user) return res.status(404).json({ message: "✗ User not found" });
+
+    const strategy = await createStrategy(db, {
+      userId: req.userId,
+      email: user.email,
+      asset: upperAsset,
+      amountPerTradeUsd,
+      intervalMinutes,
+    });
+
+    res.json({ message: "✓ Strategy created — it will run automatically", strategy });
+  })
+);
+
+app.get(
+  "/strategies",
+  verifyToken,
+  asyncHandler(async (req, res) => {
+    const strategies = await listStrategies(db, req.userId);
+    res.json(strategies);
+  })
+);
+
+app.post(
+  "/strategies/:id/pause",
+  verifyToken,
+  asyncHandler(async (req, res) => {
+    const ok = await setStrategyStatus(db, req.userId, req.params.id, "paused");
+    if (!ok) return res.status(404).json({ message: "✗ Strategy not found" });
+    res.json({ message: "✓ Strategy paused" });
+  })
+);
+
+app.post(
+  "/strategies/:id/resume",
+  verifyToken,
+  asyncHandler(async (req, res) => {
+    const ok = await setStrategyStatus(db, req.userId, req.params.id, "active");
+    if (!ok) return res.status(404).json({ message: "✗ Strategy not found" });
+    res.json({ message: "✓ Strategy resumed" });
+  })
+);
+
+app.delete(
+  "/strategies/:id",
+  verifyToken,
+  asyncHandler(async (req, res) => {
+    const ok = await deleteStrategy(db, req.userId, req.params.id);
+    if (!ok) return res.status(404).json({ message: "✗ Strategy not found" });
+    res.json({ message: "✓ Strategy deleted" });
+  })
+);
+
+app.get(
+  "/strategies/:id/performance",
+  verifyToken,
+  asyncHandler(async (req, res) => {
+    const performance = await getStrategyPerformance(db, req.userId, req.params.id, livePrices);
+    res.json(performance);
+  })
+);
+
 // In production, the built React app is served directly from this same
 // Express server — this means the frontend's relative fetch("/login") etc.
 // calls hit this same origin automatically, with no separate API URL
@@ -403,6 +492,11 @@ async function refreshLivePrices() {
     // this is what gives the order book liquidity to match against, and
     // may itself trigger fills against real users' resting limit orders.
     if (db) await refreshMarketMakerQuotes(db, io, livePrices);
+
+    // Fire any automated DCA strategies that are due this cycle — same
+    // 15s cadence as everything else price-related, so a strategy's
+    // "every N minutes" interval is checked on every price tick.
+    if (db) await runDueStrategies(db, io, livePrices);
   } catch (err) {
     console.error("Live price refresh failed, keeping last known prices:", err.message);
   }
