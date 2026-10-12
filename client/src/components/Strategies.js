@@ -1,12 +1,25 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 
+const DEFAULT_DCA = { type: "dca", asset: "BTC", amountPerTradeUsd: 50, intervalMinutes: 10 };
+const DEFAULT_PATTERN = {
+  type: "pattern",
+  asset: "BTC",
+  periodMinutes: 60,
+  downPeriods: 2,
+  upPeriods: 2,
+  amountPerTradeUsd: 50,
+  cooldownMinutes: 60,
+};
+
 function Strategies({ notify }) {
   const { token } = useAuth();
   const authHeaders = { Authorization: `Bearer ${token}` };
 
   const [strategies, setStrategies] = useState([]);
-  const [form, setForm] = useState({ asset: "BTC", amountPerTradeUsd: 50, intervalMinutes: 10 });
+  const [strategyType, setStrategyType] = useState("dca"); // "dca" | "pattern" — which form is shown
+  const [dcaForm, setDcaForm] = useState(DEFAULT_DCA);
+  const [patternForm, setPatternForm] = useState(DEFAULT_PATTERN);
   const [expandedId, setExpandedId] = useState(null);
   const [performance, setPerformance] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
@@ -28,15 +41,17 @@ function Strategies({ notify }) {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    const body = strategyType === "dca" ? dcaForm : patternForm;
     const res = await fetch("/strategies", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify(form),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     notify(data.message, res.ok ? "success" : "error");
     if (res.ok) {
-      setForm({ asset: "BTC", amountPerTradeUsd: 50, intervalMinutes: 10 });
+      setDcaForm(DEFAULT_DCA);
+      setPatternForm(DEFAULT_PATTERN);
       fetchStrategies();
     }
   };
@@ -89,46 +104,150 @@ function Strategies({ notify }) {
         })
       : "—";
 
+  // One-line human description of what each strategy actually does —
+  // shown in the table so you don't have to remember which numbers mean what.
+  const describeRule = (s) => {
+    if (s.type === "dca") return `$${s.amountPerTradeUsd} every ${s.intervalMinutes} min`;
+    return `${s.downPeriods}× down then ${s.upPeriods}× up (${s.periodMinutes}-min periods) → $${s.amountPerTradeUsd}`;
+  };
+
   return (
     <div>
-      <h3>Automated Strategy (DCA)</h3>
+      <h3>Automated Strategies</h3>
       <p className="muted" style={{ marginTop: -8, marginBottom: 16 }}>
-        Automatically invests a fixed dollar amount on a schedule, regardless of price — the same
-        market-order engine your manual trades use, just triggered on a timer instead of a click.
+        Both strategy types place real orders through the same matching engine your manual trades
+        use — the only difference is what triggers them.
       </p>
 
-      <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
-        <label>
-          Asset:
-          <select value={form.asset} onChange={(e) => setForm({ ...form, asset: e.target.value })}>
-            <option value="BTC">BTC</option>
-            <option value="ETH">ETH</option>
-          </select>
-        </label>
-        <label>
-          Amount per trade (USD):
-          <input
-            type="number"
-            min="1"
-            step="any"
-            value={form.amountPerTradeUsd}
-            onChange={(e) => setForm({ ...form, amountPerTradeUsd: Number(e.target.value) })}
-          />
-        </label>
-        <label>
-          Every (minutes):
-          <input
-            type="number"
-            min="1"
-            step="1"
-            value={form.intervalMinutes}
-            onChange={(e) => setForm({ ...form, intervalMinutes: Number(e.target.value) })}
-          />
-        </label>
-        <button type="submit" className="btn-primary">
-          Start Strategy
+      <div className="chart-tabs" style={{ marginBottom: 16 }}>
+        <button
+          type="button"
+          className={strategyType === "dca" ? "tab-active" : "tab"}
+          onClick={() => setStrategyType("dca")}
+        >
+          Dollar-Cost Averaging
         </button>
-      </form>
+        <button
+          type="button"
+          className={strategyType === "pattern" ? "tab-active" : "tab"}
+          onClick={() => setStrategyType("pattern")}
+        >
+          Price Pattern
+        </button>
+      </div>
+
+      {strategyType === "dca" ? (
+        <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Invest a fixed dollar amount on a fixed schedule, regardless of price.
+          </p>
+          <label>
+            Asset:
+            <select value={dcaForm.asset} onChange={(e) => setDcaForm({ ...dcaForm, asset: e.target.value })}>
+              <option value="BTC">BTC</option>
+              <option value="ETH">ETH</option>
+            </select>
+          </label>
+          <label>
+            Amount per trade (USD):
+            <input
+              type="number"
+              min="1"
+              step="any"
+              value={dcaForm.amountPerTradeUsd}
+              onChange={(e) => setDcaForm({ ...dcaForm, amountPerTradeUsd: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            Every (minutes):
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={dcaForm.intervalMinutes}
+              onChange={(e) => setDcaForm({ ...dcaForm, intervalMinutes: Number(e.target.value) })}
+            />
+          </label>
+          <button type="submit" className="btn-primary">
+            Start Strategy
+          </button>
+        </form>
+      ) : (
+        <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Scans price history for a shape — N periods trending down, immediately followed by M
+            periods trending up — and buys when found. Every number here is yours to set.
+          </p>
+          <label>
+            Asset:
+            <select
+              value={patternForm.asset}
+              onChange={(e) => setPatternForm({ ...patternForm, asset: e.target.value })}
+            >
+              <option value="BTC">BTC</option>
+              <option value="ETH">ETH</option>
+              <option value="ANY">ANY (scan both, buy whichever matches)</option>
+            </select>
+          </label>
+          <label>
+            Period length (minutes):
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={patternForm.periodMinutes}
+              onChange={(e) => setPatternForm({ ...patternForm, periodMinutes: Number(e.target.value) })}
+            />
+          </label>
+          <p className="muted" style={{ fontSize: "0.78rem", marginTop: -6 }}>
+            Use 1440 for a literal calendar day, or a smaller number (e.g. 5–15) to test the
+            strategy quickly without waiting real days.
+          </p>
+          <label>
+            Down periods required:
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={patternForm.downPeriods}
+              onChange={(e) => setPatternForm({ ...patternForm, downPeriods: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            Up periods required (right after):
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={patternForm.upPeriods}
+              onChange={(e) => setPatternForm({ ...patternForm, upPeriods: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            Amount per trade (USD):
+            <input
+              type="number"
+              min="1"
+              step="any"
+              value={patternForm.amountPerTradeUsd}
+              onChange={(e) => setPatternForm({ ...patternForm, amountPerTradeUsd: Number(e.target.value) })}
+            />
+          </label>
+          <label>
+            Cooldown after a trigger (minutes):
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={patternForm.cooldownMinutes}
+              onChange={(e) => setPatternForm({ ...patternForm, cooldownMinutes: Number(e.target.value) })}
+            />
+          </label>
+          <button type="submit" className="btn-primary">
+            Start Strategy
+          </button>
+        </form>
+      )}
 
       {strategies.length === 0 ? (
         <p className="muted">No strategies yet — create one above.</p>
@@ -136,9 +255,9 @@ function Strategies({ notify }) {
         <table>
           <thead>
             <tr>
+              <th>Type</th>
               <th>Asset</th>
-              <th>Per Trade</th>
-              <th>Every</th>
+              <th>Rule</th>
               <th>Status</th>
               <th>Last Ran</th>
               <th></th>
@@ -148,9 +267,9 @@ function Strategies({ notify }) {
             {strategies.map((s) => (
               <React.Fragment key={s._id}>
                 <tr>
+                  <td>{s.type === "dca" ? "DCA" : "Pattern"}</td>
                   <td>{s.asset}</td>
-                  <td>${s.amountPerTradeUsd}</td>
-                  <td>{s.intervalMinutes} min</td>
+                  <td>{describeRule(s)}</td>
                   <td>
                     <span className={`pill ${s.status === "active" ? "pill-buy" : "pill-sell"}`}>
                       {s.status}
@@ -209,7 +328,7 @@ function Strategies({ notify }) {
                         </div>
                       ) : (
                         <p className="muted">
-                          No buys yet — it'll execute automatically at the next scheduled interval.
+                          No buys yet — it'll execute automatically once its condition is met.
                         </p>
                       )}
                     </td>

@@ -12,6 +12,7 @@ const axios = require("axios");
 const createVerifyToken = require("./middleware/auth");
 const { getHoldings, getAvailableBalance, getAvailableHoldings, matchNewOrder, refreshMarketMakerQuotes } = require("./orderBook");
 const {
+  recordPriceTick,
   createStrategy,
   listStrategies,
   setStrategyStatus,
@@ -360,36 +361,77 @@ app.get(
   })
 );
 
-// --- Automated strategies (DCA) ---
+// --- Automated strategies: DCA (schedule-based) and Pattern (shape-based) ---
 app.post(
   "/strategies",
   verifyToken,
   asyncHandler(async (req, res) => {
-    const { asset, amountPerTradeUsd, intervalMinutes } = req.body;
-    const upperAsset = String(asset || "").toUpperCase();
-
-    if (!["BTC", "ETH"].includes(upperAsset)) {
-      return res.status(400).json({ message: "✗ Only BTC and ETH are supported right now" });
-    }
-    if (!amountPerTradeUsd || amountPerTradeUsd <= 0) {
-      return res.status(400).json({ message: "✗ amountPerTradeUsd must be a positive number" });
-    }
-    if (!intervalMinutes || intervalMinutes <= 0) {
-      return res.status(400).json({ message: "✗ intervalMinutes must be a positive number" });
+    const type = String(req.body.type || "dca").toLowerCase();
+    if (!["dca", "pattern"].includes(type)) {
+      return res.status(400).json({ message: "✗ type must be dca or pattern" });
     }
 
     const user = await db.collection("users").findOne({ _id: new ObjectId(req.userId) });
     if (!user) return res.status(404).json({ message: "✗ User not found" });
 
+    if (type === "dca") {
+      const { asset, amountPerTradeUsd, intervalMinutes } = req.body;
+      const upperAsset = String(asset || "").toUpperCase();
+
+      if (!["BTC", "ETH"].includes(upperAsset)) {
+        return res.status(400).json({ message: "✗ Only BTC and ETH are supported right now" });
+      }
+      if (!amountPerTradeUsd || amountPerTradeUsd <= 0) {
+        return res.status(400).json({ message: "✗ amountPerTradeUsd must be a positive number" });
+      }
+      if (!intervalMinutes || intervalMinutes <= 0) {
+        return res.status(400).json({ message: "✗ intervalMinutes must be a positive number" });
+      }
+
+      const strategy = await createStrategy(db, {
+        userId: req.userId,
+        email: user.email,
+        type: "dca",
+        asset: upperAsset,
+        amountPerTradeUsd,
+        intervalMinutes,
+      });
+      return res.json({ message: "✓ DCA strategy created — it will run automatically", strategy });
+    }
+
+    // type === "pattern"
+    const { asset, periodMinutes, downPeriods, upPeriods, amountPerTradeUsd, cooldownMinutes } = req.body;
+    const upperAsset = String(asset || "").toUpperCase();
+
+    if (!["BTC", "ETH", "ANY"].includes(upperAsset)) {
+      return res.status(400).json({ message: "✗ Asset must be BTC, ETH, or ANY" });
+    }
+    if (!periodMinutes || periodMinutes <= 0) {
+      return res.status(400).json({ message: "✗ periodMinutes must be a positive number" });
+    }
+    if (!downPeriods || downPeriods <= 0 || !upPeriods || upPeriods <= 0) {
+      return res.status(400).json({ message: "✗ downPeriods and upPeriods must each be at least 1" });
+    }
+    if (!amountPerTradeUsd || amountPerTradeUsd <= 0) {
+      return res.status(400).json({ message: "✗ amountPerTradeUsd must be a positive number" });
+    }
+
     const strategy = await createStrategy(db, {
       userId: req.userId,
       email: user.email,
+      type: "pattern",
       asset: upperAsset,
+      periodMinutes,
+      downPeriods,
+      upPeriods,
       amountPerTradeUsd,
-      intervalMinutes,
+      cooldownMinutes,
     });
 
-    res.json({ message: "✓ Strategy created — it will run automatically", strategy });
+    res.json({
+      message: `✓ Pattern strategy created — scanning for ${downPeriods} period(s) down then ${upPeriods} up`,
+      strategy,
+    });
   })
 );
 
@@ -488,14 +530,19 @@ async function refreshLivePrices() {
       ],
     });
 
+    // Persist this tick so pattern strategies have real history to scan —
+    // the in-memory priceHistory above only holds ~50 minutes and resets
+    // on restart, nowhere near enough for a multi-period pattern.
+    if (db) await recordPriceTick(db, livePrices);
+
     // Refresh the market maker's resting quotes around the real price —
     // this is what gives the order book liquidity to match against, and
     // may itself trigger fills against real users' resting limit orders.
     if (db) await refreshMarketMakerQuotes(db, io, livePrices);
 
-    // Fire any automated DCA strategies that are due this cycle — same
-    // 15s cadence as everything else price-related, so a strategy's
-    // "every N minutes" interval is checked on every price tick.
+    // Fire any automated strategies that are due this cycle — DCA on its
+    // schedule, pattern strategies checked against the price history just
+    // recorded above.
     if (db) await runDueStrategies(db, io, livePrices);
   } catch (err) {
     console.error("Live price refresh failed, keeping last known prices:", err.message);
@@ -516,6 +563,12 @@ async function start() {
   await client.connect();
   db = client.db("tradingApp");
   console.log("✅ Connected to MongoDB Atlas");
+
+  // Index for the pattern-strategy price history: speeds up the per-asset
+  // time-range scan, and auto-expires ticks older than 30 days so this
+  // collection doesn't grow forever (one write every 15s per asset adds up).
+  await db.collection("priceTicks").createIndex({ asset: 1, createdAt: 1 });
+  await db.collection("priceTicks").createIndex({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
 
   // Prime the live price cache immediately, then poll every 15s. CoinGecko's
   // free tier is fine with this rate; this same price feed drives market
