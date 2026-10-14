@@ -1,346 +1,266 @@
-import React, { useState, useEffect, useCallback } from "react";
-import { useAuth } from "../context/AuthContext";
-
-const DEFAULT_DCA = { type: "dca", asset: "BTC", amountPerTradeUsd: 50, intervalMinutes: 10 };
-const DEFAULT_PATTERN = {
-  type: "pattern",
-  asset: "BTC",
-  periodMinutes: 60,
-  downPeriods: 2,
-  upPeriods: 2,
-  amountPerTradeUsd: 50,
-  cooldownMinutes: 60,
-};
-
-function Strategies({ notify }) {
-  const { token } = useAuth();
-  const authHeaders = { Authorization: `Bearer ${token}` };
-
-  const [strategies, setStrategies] = useState([]);
-  const [strategyType, setStrategyType] = useState("dca"); // "dca" | "pattern" — which form is shown
-  const [dcaForm, setDcaForm] = useState(DEFAULT_DCA);
-  const [patternForm, setPatternForm] = useState(DEFAULT_PATTERN);
-  const [expandedId, setExpandedId] = useState(null);
-  const [performance, setPerformance] = useState(null);
-  const [perfLoading, setPerfLoading] = useState(false);
-
-  const fetchStrategies = useCallback(async () => {
-    const res = await fetch("/strategies", { headers: authHeaders });
-    const data = await res.json();
-    setStrategies(data);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  useEffect(() => {
-    fetchStrategies();
-    // Refresh periodically so a strategy firing in the background shows up
-    // without the user having to do anything.
-    const interval = setInterval(fetchStrategies, 15000);
-    return () => clearInterval(interval);
-  }, [fetchStrategies]);
-
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    const body = strategyType === "dca" ? dcaForm : patternForm;
-    const res = await fetch("/strategies", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    notify(data.message, res.ok ? "success" : "error");
-    if (res.ok) {
-      setDcaForm(DEFAULT_DCA);
-      setPatternForm(DEFAULT_PATTERN);
-      fetchStrategies();
-    }
-  };
-
-  const handlePauseResume = async (strategy) => {
-    const action = strategy.status === "active" ? "pause" : "resume";
-    const res = await fetch(`/strategies/${strategy._id}/${action}`, {
-      method: "POST",
-      headers: authHeaders,
-    });
-    const data = await res.json();
-    notify(data.message, res.ok ? "success" : "error");
-    if (res.ok) fetchStrategies();
-  };
-
-  const handleDelete = async (id) => {
-    const res = await fetch(`/strategies/${id}`, {
-      method: "DELETE",
-      headers: authHeaders,
-    });
-    const data = await res.json();
-    notify(data.message, res.ok ? "success" : "error");
-    if (res.ok) {
-      fetchStrategies();
-      if (expandedId === id) setExpandedId(null);
-    }
-  };
-
-  const togglePerformance = async (id) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      setPerformance(null);
-      return;
-    }
-    setExpandedId(id);
-    setPerfLoading(true);
-    const res = await fetch(`/strategies/${id}/performance`, { headers: authHeaders });
-    const data = await res.json();
-    setPerformance(data);
-    setPerfLoading(false);
-  };
-
-  const formatTime = (t) =>
-    t
-      ? new Date(t).toLocaleString("en-IN", {
-          day: "numeric",
-          month: "short",
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "—";
-
-  // One-line human description of what each strategy actually does —
-  // shown in the table so you don't have to remember which numbers mean what.
-  const describeRule = (s) => {
-    if (s.type === "dca") return `$${s.amountPerTradeUsd} every ${s.intervalMinutes} min`;
-    return `${s.downPeriods}× down then ${s.upPeriods}× up (${s.periodMinutes}-min periods) → $${s.amountPerTradeUsd}`;
-  };
-
-  return (
-    <div>
-      <h3>Automated Strategies</h3>
-      <p className="muted" style={{ marginTop: -8, marginBottom: 16 }}>
-        Both strategy types place real orders through the same matching engine your manual trades
-        use — the only difference is what triggers them.
-      </p>
-
-      <div className="chart-tabs" style={{ marginBottom: 16 }}>
-        <button
-          type="button"
-          className={strategyType === "dca" ? "tab-active" : "tab"}
-          onClick={() => setStrategyType("dca")}
-        >
-          Dollar-Cost Averaging
-        </button>
-        <button
-          type="button"
-          className={strategyType === "pattern" ? "tab-active" : "tab"}
-          onClick={() => setStrategyType("pattern")}
-        >
-          Price Pattern
-        </button>
-      </div>
-
-      {strategyType === "dca" ? (
-        <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
-          <p className="muted" style={{ marginTop: 0 }}>
-            Invest a fixed dollar amount on a fixed schedule, regardless of price.
-          </p>
-          <label>
-            Asset:
-            <select value={dcaForm.asset} onChange={(e) => setDcaForm({ ...dcaForm, asset: e.target.value })}>
-              <option value="BTC">BTC</option>
-              <option value="ETH">ETH</option>
-            </select>
-          </label>
-          <label>
-            Amount per trade (USD):
-            <input
-              type="number"
-              min="1"
-              step="any"
-              value={dcaForm.amountPerTradeUsd}
-              onChange={(e) => setDcaForm({ ...dcaForm, amountPerTradeUsd: Number(e.target.value) })}
-            />
-          </label>
-          <label>
-            Every (minutes):
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={dcaForm.intervalMinutes}
-              onChange={(e) => setDcaForm({ ...dcaForm, intervalMinutes: Number(e.target.value) })}
-            />
-          </label>
-          <button type="submit" className="btn-primary">
-            Start Strategy
-          </button>
-        </form>
-      ) : (
-        <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
-          <p className="muted" style={{ marginTop: 0 }}>
-            Scans price history for a shape — N periods trending down, immediately followed by M
-            periods trending up — and buys when found. Every number here is yours to set.
-          </p>
-          <label>
-            Asset:
-            <select
-              value={patternForm.asset}
-              onChange={(e) => setPatternForm({ ...patternForm, asset: e.target.value })}
-            >
-              <option value="BTC">BTC</option>
-              <option value="ETH">ETH</option>
-              <option value="ANY">ANY (scan both, buy whichever matches)</option>
-            </select>
-          </label>
-          <label>
-            Period length (minutes):
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={patternForm.periodMinutes}
-              onChange={(e) => setPatternForm({ ...patternForm, periodMinutes: Number(e.target.value) })}
-            />
-          </label>
-          <p className="muted" style={{ fontSize: "0.78rem", marginTop: -6 }}>
-            Use 1440 for a literal calendar day, or a smaller number (e.g. 5–15) to test the
-            strategy quickly without waiting real days.
-          </p>
-          <label>
-            Down periods required:
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={patternForm.downPeriods}
-              onChange={(e) => setPatternForm({ ...patternForm, downPeriods: Number(e.target.value) })}
-            />
-          </label>
-          <label>
-            Up periods required (right after):
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={patternForm.upPeriods}
-              onChange={(e) => setPatternForm({ ...patternForm, upPeriods: Number(e.target.value) })}
-            />
-          </label>
-          <label>
-            Amount per trade (USD):
-            <input
-              type="number"
-              min="1"
-              step="any"
-              value={patternForm.amountPerTradeUsd}
-              onChange={(e) => setPatternForm({ ...patternForm, amountPerTradeUsd: Number(e.target.value) })}
-            />
-          </label>
-          <label>
-            Cooldown after a trigger (minutes):
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={patternForm.cooldownMinutes}
-              onChange={(e) => setPatternForm({ ...patternForm, cooldownMinutes: Number(e.target.value) })}
-            />
-          </label>
-          <button type="submit" className="btn-primary">
-            Start Strategy
-          </button>
-        </form>
-      )}
-
-      {strategies.length === 0 ? (
-        <p className="muted">No strategies yet — create one above.</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Asset</th>
-              <th>Rule</th>
-              <th>Status</th>
-              <th>Last Ran</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {strategies.map((s) => (
-              <React.Fragment key={s._id}>
-                <tr>
-                  <td>{s.type === "dca" ? "DCA" : "Pattern"}</td>
-                  <td>{s.asset}</td>
-                  <td>{describeRule(s)}</td>
-                  <td>
-                    <span className={`pill ${s.status === "active" ? "pill-buy" : "pill-sell"}`}>
-                      {s.status}
-                    </span>
-                  </td>
-                  <td>{formatTime(s.lastRunAt)}</td>
-                  <td style={{ display: "flex", gap: 8 }}>
-                    <button className="btn-secondary" onClick={() => togglePerformance(s._id)}>
-                      {expandedId === s._id ? "Hide" : "Performance"}
-                    </button>
-                    <button className="btn-secondary" onClick={() => handlePauseResume(s)}>
-                      {s.status === "active" ? "Pause" : "Resume"}
-                    </button>
-                    <button className="btn-danger-outline" onClick={() => handleDelete(s._id)}>
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-                {expandedId === s._id && (
-                  <tr>
-                    <td colSpan={6}>
-                      {perfLoading ? (
-                        <p className="muted">Loading performance…</p>
-                      ) : performance && performance.tradeCount > 0 ? (
-                        <div style={{ padding: "8px 0" }}>
-                          <div className="stats-row" style={{ marginBottom: 12 }}>
-                            <div className="stat-card">
-                              <span className="stat-label">Buys made</span>
-                              <span className="stat-value">{performance.tradeCount}</span>
-                            </div>
-                            <div className="stat-card">
-                              <span className="stat-label">Avg. buy price</span>
-                              <span className="stat-value">${performance.avgBuyPrice.toFixed(2)}</span>
-                            </div>
-                          </div>
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Amount Held</th>
-                                <th>Invested</th>
-                                <th>Current Value</th>
-                                <th>P&amp;L</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr>
-                                <td>{performance.amount.toFixed(6)}</td>
-                                <td>${performance.invested.toFixed(2)}</td>
-                                <td>${performance.currentValue.toFixed(2)}</td>
-                                <td className={performance.pnl >= 0 ? "text-green" : "text-red"}>
-                                  {performance.pnl >= 0 ? "+" : ""}${performance.pnl.toFixed(2)}
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <p className="muted">
-                          No buys yet — it'll execute automatically once its condition is met.
-                        </p>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </React.Fragment>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
+﻿
+const { ObjectId } = require("mongodb");
+const { matchNewOrder } = require("./orderBook");
+ 
+// Automated strategies. Both types place ordinary MARKET BUY orders through
+// matchNewOrder(), the same function manual trades use.
+//
+//  - "dca":     buy $X of an asset every N minutes.
+//  - "pattern": look at price history in fixed periods; when the last
+//               `downPeriods` periods each closed lower than the one before,
+//               immediately followed by `upPeriods` periods each closing
+//               higher, buy $X. A cooldown stops it re-firing on the same dip.
+//
+// Collections used: "strategies", "strategyRuns", "priceTicks".
+ 
+const ASSETS = ["BTC", "ETH"];
+ 
+function toObjectId(id) {
+  try {
+    return new ObjectId(String(id));
+  } catch {
+    return null;
+  }
 }
-
-export default Strategies;
+ 
+function serialize(doc) {
+  if (!doc) return doc;
+  const { _id, ...rest } = doc;
+  return { id: String(_id), _id: String(_id), ...rest };
+}
+ 
+// ---------- price history ----------
+ 
+async function recordPriceTick(db, prices) {
+  if (!prices) return;
+  const now = new Date();
+  const docs = ASSETS.filter((a) => Number(prices[a]) > 0).map((a) => ({
+    asset: a,
+    price: Number(prices[a]),
+    createdAt: now,
+  }));
+  if (docs.length) await db.collection("priceTicks").insertMany(docs);
+}
+ 
+// ---------- create / list / pause / delete ----------
+ 
+async function createStrategy(db, input) {
+  const type = input.type === "pattern" ? "pattern" : "dca";
+  const now = new Date();
+  const strategy = {
+    userId: input.userId,
+    email: input.email,
+    type,
+    asset: input.asset,
+    amountPerTradeUsd: Number(input.amountPerTradeUsd),
+    status: "active",
+    createdAt: now,
+    lastRunAt: null,
+    runCount: 0,
+  };
+ 
+  if (type === "dca") {
+    strategy.intervalMinutes = Number(input.intervalMinutes);
+    strategy.nextRunAt = new Date(now.getTime() + strategy.intervalMinutes * 60000);
+  } else {
+    strategy.periodMinutes = Number(input.periodMinutes);
+    strategy.downPeriods = Number(input.downPeriods);
+    strategy.upPeriods = Number(input.upPeriods);
+    strategy.cooldownMinutes =
+      input.cooldownMinutes !== undefined && input.cooldownMinutes !== "" && Number(input.cooldownMinutes) >= 0
+        ? Number(input.cooldownMinutes)
+        : strategy.periodMinutes;
+    strategy.lastTriggeredAt = null;
+  }
+ 
+  const result = await db.collection("strategies").insertOne(strategy);
+  return serialize({ _id: result.insertedId, ...strategy });
+}
+ 
+async function listStrategies(db, userId) {
+  const docs = await db.collection("strategies").find({ userId }).sort({ createdAt: -1 }).toArray();
+  return docs.map(serialize);
+}
+ 
+async function setStrategyStatus(db, userId, id, status) {
+  const _id = toObjectId(id);
+  if (!_id) return false;
+  const set = { status };
+  if (status === "active") {
+    const s = await db.collection("strategies").findOne({ _id, userId });
+    if (s && s.type === "dca") set.nextRunAt = new Date(Date.now() + s.intervalMinutes * 60000);
+  }
+  const res = await db.collection("strategies").updateOne({ _id, userId }, { $set: set });
+  return res.matchedCount > 0;
+}
+ 
+async function deleteStrategy(db, userId, id) {
+  const _id = toObjectId(id);
+  if (!_id) return false;
+  const res = await db.collection("strategies").deleteOne({ _id, userId });
+  return res.deletedCount > 0;
+}
+ 
+// ---------- pattern detection ----------
+ 
+// ticks: [{price, createdAt}] sorted ascending. Returns true if the most recent
+// (down + up) periods match "down...down, up...up".
+function detectPattern(ticks, nowMs, periodMinutes, downPeriods, upPeriods) {
+  const periodMs = periodMinutes * 60000;
+  const total = downPeriods + upPeriods;
+  if (!ticks.length) return false;
+ 
+  // Boundary prices p[0..total]: price at the end of each period, p[total] = now.
+  const p = [];
+  let idx = 0;
+  for (let j = 0; j <= total; j++) {
+    const boundary = nowMs - (total - j) * periodMs;
+    while (idx + 1 < ticks.length && ticks[idx + 1].createdAt.getTime() <= boundary) idx++;
+    const t = ticks[idx];
+    const tMs = t.createdAt.getTime();
+    // Need a tick at/before this boundary and not stale (gap after downtime).
+    if (tMs > boundary || boundary - tMs > periodMs) return false;
+    p.push(t.price);
+  }
+ 
+  for (let j = 0; j < downPeriods; j++) if (!(p[j + 1] < p[j])) return false;
+  for (let j = downPeriods; j < total; j++) if (!(p[j + 1] > p[j])) return false;
+  return true;
+}
+ 
+// ---------- execution ----------
+ 
+async function placeBuy(db, io, strategy, asset, price) {
+  const amount = Number((strategy.amountPerTradeUsd / price).toFixed(8));
+  if (!(amount > 0)) return null;
+ 
+  const { filled } = await matchNewOrder(db, io, {
+    userId: strategy.userId,
+    email: strategy.email,
+    asset,
+    side: "buy",
+    orderType: "market",
+    amount,
+    price: null,
+  });
+ 
+  const run = {
+    strategyId: String(strategy._id),
+    userId: strategy.userId,
+    asset,
+    side: "buy",
+    requestedUnits: amount,
+    filledUnits: Number(filled) || 0,
+    refPrice: price,
+    usdSpent: (Number(filled) || 0) * price,
+    createdAt: new Date(),
+  };
+  await db.collection("strategyRuns").insertOne(run);
+  return run;
+}
+ 
+async function runDueStrategies(db, io, prices) {
+  if (!prices) return;
+  const now = new Date();
+  const active = await db.collection("strategies").find({ status: "active" }).toArray();
+ 
+  for (const s of active) {
+    try {
+      if (s.type === "dca") {
+        if (!s.nextRunAt || s.nextRunAt > now) continue;
+        const price = Number(prices[s.asset]);
+        if (!(price > 0)) continue;
+        await placeBuy(db, io, s, s.asset, price);
+        await db.collection("strategies").updateOne(
+          { _id: s._id },
+          {
+            $set: { lastRunAt: now, nextRunAt: new Date(now.getTime() + s.intervalMinutes * 60000) },
+            $inc: { runCount: 1 },
+          }
+        );
+      } else if (s.type === "pattern") {
+        const cooldownMs = (s.cooldownMinutes || 0) * 60000;
+        if (s.lastTriggeredAt && now - s.lastTriggeredAt < cooldownMs) continue;
+ 
+        const assets = s.asset === "ANY" ? ASSETS : [s.asset];
+        const total = s.downPeriods + s.upPeriods;
+        const since = new Date(now.getTime() - (total + 1) * s.periodMinutes * 60000);
+ 
+        for (const asset of assets) {
+          const price = Number(prices[asset]);
+          if (!(price > 0)) continue;
+          const ticks = await db
+            .collection("priceTicks")
+            .find({ asset, createdAt: { $gte: since } })
+            .sort({ createdAt: 1 })
+            .toArray();
+ 
+          if (detectPattern(ticks, now.getTime(), s.periodMinutes, s.downPeriods, s.upPeriods)) {
+            await placeBuy(db, io, s, asset, price);
+            await db.collection("strategies").updateOne(
+              { _id: s._id },
+              { $set: { lastRunAt: now, lastTriggeredAt: now }, $inc: { runCount: 1 } }
+            );
+            break; // one trigger per strategy per cycle
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`Strategy ${s._id} failed:`, err.message);
+    }
+  }
+}
+ 
+// ---------- performance ----------
+ 
+async function getStrategyPerformance(db, userId, id, prices) {
+  const _id = toObjectId(id);
+  const strategy = _id ? await db.collection("strategies").findOne({ _id, userId }) : null;
+  if (!strategy) return { strategyId: id, tradeCount: 0, totalInvested: 0, totalUnits: 0, trades: [] };
+ 
+  const runs = await db
+    .collection("strategyRuns")
+    .find({ strategyId: String(_id), userId })
+    .sort({ createdAt: 1 })
+    .toArray();
+ 
+  let totalInvested = 0;
+  let currentValue = 0;
+  const unitsByAsset = {};
+  for (const r of runs) {
+    totalInvested += r.usdSpent || 0;
+    unitsByAsset[r.asset] = (unitsByAsset[r.asset] || 0) + (r.filledUnits || 0);
+  }
+  for (const [asset, units] of Object.entries(unitsByAsset)) {
+    currentValue += units * Number((prices && prices[asset]) || 0);
+  }
+  const totalUnits = Object.values(unitsByAsset).reduce((a, b) => a + b, 0);
+  const profit = currentValue - totalInvested;
+ 
+  return {
+    strategyId: String(_id),
+    type: strategy.type,
+    asset: strategy.asset,
+    status: strategy.status,
+    tradeCount: runs.length,
+    totalInvested,
+    totalUnits,
+    averageCost: totalUnits > 0 ? totalInvested / totalUnits : 0,
+    currentValue,
+    profit,
+    profitLoss: profit,
+    profitPercent: totalInvested > 0 ? (profit / totalInvested) * 100 : 0,
+    trades: runs.slice(-20).reverse().map(serialize),
+  };
+}
+ 
+module.exports = {
+  recordPriceTick,
+  createStrategy,
+  listStrategies,
+  setStrategyStatus,
+  deleteStrategy,
+  runDueStrategies,
+  getStrategyPerformance,
+};
+module.exports._detectPattern = detectPattern;
