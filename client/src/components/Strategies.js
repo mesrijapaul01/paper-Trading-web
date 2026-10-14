@@ -1,4 +1,3 @@
-﻿
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
@@ -41,7 +40,7 @@ function Strategies({ notify }) {
   const authHeaders = { Authorization: `Bearer ${token}` };
  
   const [strategies, setStrategies] = useState([]);
-  const [strategyType, setStrategyType] = useState("dca"); // "dca" | "pattern" â€” which form is shown
+  const [strategyType, setStrategyType] = useState("dca"); // "dca" | "pattern" - which form is shown
   const [dcaForm, setDcaForm] = useState(DEFAULT_DCA);
   const [patternForm, setPatternForm] = useState(DEFAULT_PATTERN);
   const [expandedId, setExpandedId] = useState(null);
@@ -78,7 +77,7 @@ function Strategies({ notify }) {
       const neededDays = (patternForm.downPeriods + patternForm.upPeriods + 1) * patternForm.periodDays;
       if (neededDays > MAX_HISTORY_DAYS) {
         notify(
-          `âœ— That pattern needs about ${Math.ceil(neededDays)} days of price history, but only ${MAX_HISTORY_DAYS} days are kept. Use shorter periods or fewer of them.`,
+          `\u2717 That pattern needs about ${Math.ceil(neededDays)} days of price history, but only ${MAX_HISTORY_DAYS} days are kept. Use shorter periods or fewer of them.`,
           "error"
         );
         return;
@@ -154,13 +153,13 @@ function Strategies({ notify }) {
           hour: "2-digit",
           minute: "2-digit",
         })
-      : "â€”";
+      : "\u2014";
  
-  // One-line human description of what each strategy actually does â€”
+  // One-line human description of what each strategy actually does -
   // shown in the table so you don't have to remember which numbers mean what.
   const describeRule = (s) => {
     if (s.type === "dca") return `$${s.amountPerTradeUsd} every ${formatDuration(s.intervalMinutes)}`;
-    return `${s.downPeriods}Ã— down then ${s.upPeriods}Ã— up (${formatDuration(s.periodMinutes)} periods) â†’ $${s.amountPerTradeUsd}`;
+    return `${s.downPeriods}\u00d7 down then ${s.upPeriods}\u00d7 up (${formatDuration(s.periodMinutes)} periods) \u2192 $${s.amountPerTradeUsd}`;
   };
  
   return (
@@ -168,7 +167,7 @@ function Strategies({ notify }) {
       <h3>Automated Strategies</h3>
       <p className="muted" style={{ marginTop: -8, marginBottom: 16 }}>
         Both strategy types place real orders through the same matching engine your manual trades
-        use â€” the only difference is what triggers them.
+        use &mdash; the only difference is what triggers them.
       </p>
  
       <div className="chart-tabs" style={{ marginBottom: 16 }}>
@@ -227,8 +226,8 @@ function Strategies({ notify }) {
       ) : (
         <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
           <p className="muted" style={{ marginTop: 0 }}>
-            Scans price history for a shape â€” N periods trending down, immediately followed by M
-            periods trending up â€” and buys when found. Every number here is yours to set.
+            Scans price history for a shape &mdash; N periods trending down, immediately followed by M
+            periods trending up &mdash; and buys when found. Every number here is yours to set.
           </p>
           <label>
             Asset:
@@ -253,7 +252,7 @@ function Strategies({ notify }) {
           </label>
           <p className="muted" style={{ fontSize: "0.78rem", marginTop: -6 }}>
             1 = one calendar day. Fractions work too (0.5 = 12 hours). Price history is kept for{" "}
-            {MAX_HISTORY_DAYS} days, so (down + up + 1) Ã— period length must fit within that.
+            {MAX_HISTORY_DAYS} days, so (down + up + 1) &times; period length must fit within that.
           </p>
           <label>
             Down periods required:
@@ -302,7 +301,7 @@ function Strategies({ notify }) {
       )}
  
       {strategies.length === 0 ? (
-        <p className="muted">No strategies yet â€” create one above.</p>
+        <p className="muted">No strategies yet &mdash; create one above.</p>
       ) : (
         <table>
           <thead>
@@ -344,7 +343,7 @@ function Strategies({ notify }) {
                   <tr>
                     <td colSpan={6}>
                       {perfLoading ? (
-                        <p className="muted">Loading performanceâ€¦</p>
+                        <p className="muted">Loading performance&hellip;</p>
                       ) : performance && performance.tradeCount > 0 ? (
                         <div style={{ padding: "8px 0" }}>
                           <div className="stats-row" style={{ marginBottom: 12 }}>
@@ -380,7 +379,7 @@ function Strategies({ notify }) {
                         </div>
                       ) : (
                         <p className="muted">
-                          No buys yet â€” it'll execute automatically once its condition is met.
+                          No buys yet &mdash; it'll execute automatically once its condition is met.
                         </p>
                       )}
                     </td>
