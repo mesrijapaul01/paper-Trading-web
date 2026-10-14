@@ -235,21 +235,22 @@ async function getStrategyPerformance(db, userId, id, prices) {
     currentValue += units * Number((prices && prices[asset]) || 0);
   }
   const totalUnits = Object.values(unitsByAsset).reduce((a, b) => a + b, 0);
-  const profit = currentValue - totalInvested;
+  const pnl = currentValue - totalInvested;
+  const avgBuyPrice = totalUnits > 0 ? totalInvested / totalUnits : 0;
  
+  // Field names match what client/src/components/Strategies.js reads.
   return {
     strategyId: String(_id),
     type: strategy.type,
     asset: strategy.asset,
     status: strategy.status,
     tradeCount: runs.length,
-    totalInvested,
-    totalUnits,
-    averageCost: totalUnits > 0 ? totalInvested / totalUnits : 0,
+    amount: totalUnits,
+    invested: totalInvested,
+    avgBuyPrice,
     currentValue,
-    profit,
-    profitLoss: profit,
-    profitPercent: totalInvested > 0 ? (profit / totalInvested) * 100 : 0,
+    pnl,
+    pnlPercent: totalInvested > 0 ? (pnl / totalInvested) * 100 : 0,
     trades: runs.slice(-20).reverse().map(serialize),
   };
 }

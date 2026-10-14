@@ -1,36 +1,60 @@
+﻿
+
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-
-const DEFAULT_DCA = { type: "dca", asset: "BTC", amountPerTradeUsd: 50, intervalMinutes: 10 };
+ 
+const MINUTES_PER_DAY = 1440;
+// The server keeps price history for 30 days, so a pattern can't span more.
+const MAX_HISTORY_DAYS = 30;
+ 
+// The forms work in DAYS. They're converted to minutes right before sending,
+// because the server stores and schedules everything in minutes.
+const DEFAULT_DCA = { type: "dca", asset: "BTC", amountPerTradeUsd: 50, intervalDays: 1 };
 const DEFAULT_PATTERN = {
   type: "pattern",
   asset: "BTC",
-  periodMinutes: 60,
+  periodDays: 1,
   downPeriods: 2,
   upPeriods: 2,
   amountPerTradeUsd: 50,
-  cooldownMinutes: 60,
+  cooldownDays: 1,
 };
-
+ 
+const daysToMinutes = (days) => Math.max(1, Math.round(Number(days) * MINUTES_PER_DAY));
+ 
+// Show a stored number of minutes in friendly units.
+const formatDuration = (minutes) => {
+  const m = Number(minutes);
+  if (m >= MINUTES_PER_DAY) {
+    const d = Math.round((m / MINUTES_PER_DAY) * 100) / 100;
+    return `${d} day${d === 1 ? "" : "s"}`;
+  }
+  if (m >= 60) {
+    const h = Math.round((m / 60) * 10) / 10;
+    return `${h} hr${h === 1 ? "" : "s"}`;
+  }
+  return `${m} min`;
+};
+ 
 function Strategies({ notify }) {
   const { token } = useAuth();
   const authHeaders = { Authorization: `Bearer ${token}` };
-
+ 
   const [strategies, setStrategies] = useState([]);
-  const [strategyType, setStrategyType] = useState("dca"); // "dca" | "pattern" — which form is shown
+  const [strategyType, setStrategyType] = useState("dca"); // "dca" | "pattern" â€” which form is shown
   const [dcaForm, setDcaForm] = useState(DEFAULT_DCA);
   const [patternForm, setPatternForm] = useState(DEFAULT_PATTERN);
   const [expandedId, setExpandedId] = useState(null);
   const [performance, setPerformance] = useState(null);
   const [perfLoading, setPerfLoading] = useState(false);
-
+ 
   const fetchStrategies = useCallback(async () => {
     const res = await fetch("/strategies", { headers: authHeaders });
     const data = await res.json();
     setStrategies(data);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
-
+ 
   useEffect(() => {
     fetchStrategies();
     // Refresh periodically so a strategy firing in the background shows up
@@ -38,10 +62,38 @@ function Strategies({ notify }) {
     const interval = setInterval(fetchStrategies, 15000);
     return () => clearInterval(interval);
   }, [fetchStrategies]);
-
+ 
   const handleCreate = async (e) => {
     e.preventDefault();
-    const body = strategyType === "dca" ? dcaForm : patternForm;
+ 
+    let body;
+    if (strategyType === "dca") {
+      body = {
+        type: "dca",
+        asset: dcaForm.asset,
+        amountPerTradeUsd: dcaForm.amountPerTradeUsd,
+        intervalMinutes: daysToMinutes(dcaForm.intervalDays),
+      };
+    } else {
+      const neededDays = (patternForm.downPeriods + patternForm.upPeriods + 1) * patternForm.periodDays;
+      if (neededDays > MAX_HISTORY_DAYS) {
+        notify(
+          `âœ— That pattern needs about ${Math.ceil(neededDays)} days of price history, but only ${MAX_HISTORY_DAYS} days are kept. Use shorter periods or fewer of them.`,
+          "error"
+        );
+        return;
+      }
+      body = {
+        type: "pattern",
+        asset: patternForm.asset,
+        periodMinutes: daysToMinutes(patternForm.periodDays),
+        downPeriods: patternForm.downPeriods,
+        upPeriods: patternForm.upPeriods,
+        amountPerTradeUsd: patternForm.amountPerTradeUsd,
+        cooldownMinutes: daysToMinutes(patternForm.cooldownDays),
+      };
+    }
+ 
     const res = await fetch("/strategies", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
@@ -55,7 +107,7 @@ function Strategies({ notify }) {
       fetchStrategies();
     }
   };
-
+ 
   const handlePauseResume = async (strategy) => {
     const action = strategy.status === "active" ? "pause" : "resume";
     const res = await fetch(`/strategies/${strategy._id}/${action}`, {
@@ -66,7 +118,7 @@ function Strategies({ notify }) {
     notify(data.message, res.ok ? "success" : "error");
     if (res.ok) fetchStrategies();
   };
-
+ 
   const handleDelete = async (id) => {
     const res = await fetch(`/strategies/${id}`, {
       method: "DELETE",
@@ -79,7 +131,7 @@ function Strategies({ notify }) {
       if (expandedId === id) setExpandedId(null);
     }
   };
-
+ 
   const togglePerformance = async (id) => {
     if (expandedId === id) {
       setExpandedId(null);
@@ -93,7 +145,7 @@ function Strategies({ notify }) {
     setPerformance(data);
     setPerfLoading(false);
   };
-
+ 
   const formatTime = (t) =>
     t
       ? new Date(t).toLocaleString("en-IN", {
@@ -102,23 +154,23 @@ function Strategies({ notify }) {
           hour: "2-digit",
           minute: "2-digit",
         })
-      : "—";
-
-  // One-line human description of what each strategy actually does —
+      : "â€”";
+ 
+  // One-line human description of what each strategy actually does â€”
   // shown in the table so you don't have to remember which numbers mean what.
   const describeRule = (s) => {
-    if (s.type === "dca") return `$${s.amountPerTradeUsd} every ${s.intervalMinutes} min`;
-    return `${s.downPeriods}× down then ${s.upPeriods}× up (${s.periodMinutes}-min periods) → $${s.amountPerTradeUsd}`;
+    if (s.type === "dca") return `$${s.amountPerTradeUsd} every ${formatDuration(s.intervalMinutes)}`;
+    return `${s.downPeriods}Ã— down then ${s.upPeriods}Ã— up (${formatDuration(s.periodMinutes)} periods) â†’ $${s.amountPerTradeUsd}`;
   };
-
+ 
   return (
     <div>
       <h3>Automated Strategies</h3>
       <p className="muted" style={{ marginTop: -8, marginBottom: 16 }}>
         Both strategy types place real orders through the same matching engine your manual trades
-        use — the only difference is what triggers them.
+        use â€” the only difference is what triggers them.
       </p>
-
+ 
       <div className="chart-tabs" style={{ marginBottom: 16 }}>
         <button
           type="button"
@@ -135,7 +187,7 @@ function Strategies({ notify }) {
           Price Pattern
         </button>
       </div>
-
+ 
       {strategyType === "dca" ? (
         <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
           <p className="muted" style={{ marginTop: 0 }}>
@@ -159,13 +211,13 @@ function Strategies({ notify }) {
             />
           </label>
           <label>
-            Every (minutes):
+            Every (days):
             <input
               type="number"
-              min="1"
-              step="1"
-              value={dcaForm.intervalMinutes}
-              onChange={(e) => setDcaForm({ ...dcaForm, intervalMinutes: Number(e.target.value) })}
+              min="0.001"
+              step="any"
+              value={dcaForm.intervalDays}
+              onChange={(e) => setDcaForm({ ...dcaForm, intervalDays: Number(e.target.value) })}
             />
           </label>
           <button type="submit" className="btn-primary">
@@ -175,8 +227,8 @@ function Strategies({ notify }) {
       ) : (
         <form onSubmit={handleCreate} style={{ marginBottom: 20 }}>
           <p className="muted" style={{ marginTop: 0 }}>
-            Scans price history for a shape — N periods trending down, immediately followed by M
-            periods trending up — and buys when found. Every number here is yours to set.
+            Scans price history for a shape â€” N periods trending down, immediately followed by M
+            periods trending up â€” and buys when found. Every number here is yours to set.
           </p>
           <label>
             Asset:
@@ -190,18 +242,18 @@ function Strategies({ notify }) {
             </select>
           </label>
           <label>
-            Period length (minutes):
+            Period length (days):
             <input
               type="number"
-              min="1"
-              step="1"
-              value={patternForm.periodMinutes}
-              onChange={(e) => setPatternForm({ ...patternForm, periodMinutes: Number(e.target.value) })}
+              min="0.001"
+              step="any"
+              value={patternForm.periodDays}
+              onChange={(e) => setPatternForm({ ...patternForm, periodDays: Number(e.target.value) })}
             />
           </label>
           <p className="muted" style={{ fontSize: "0.78rem", marginTop: -6 }}>
-            Use 1440 for a literal calendar day, or a smaller number (e.g. 5–15) to test the
-            strategy quickly without waiting real days.
+            1 = one calendar day. Fractions work too (0.5 = 12 hours). Price history is kept for{" "}
+            {MAX_HISTORY_DAYS} days, so (down + up + 1) Ã— period length must fit within that.
           </p>
           <label>
             Down periods required:
@@ -234,13 +286,13 @@ function Strategies({ notify }) {
             />
           </label>
           <label>
-            Cooldown after a trigger (minutes):
+            Cooldown after a trigger (days):
             <input
               type="number"
-              min="1"
-              step="1"
-              value={patternForm.cooldownMinutes}
-              onChange={(e) => setPatternForm({ ...patternForm, cooldownMinutes: Number(e.target.value) })}
+              min="0.001"
+              step="any"
+              value={patternForm.cooldownDays}
+              onChange={(e) => setPatternForm({ ...patternForm, cooldownDays: Number(e.target.value) })}
             />
           </label>
           <button type="submit" className="btn-primary">
@@ -248,9 +300,9 @@ function Strategies({ notify }) {
           </button>
         </form>
       )}
-
+ 
       {strategies.length === 0 ? (
-        <p className="muted">No strategies yet — create one above.</p>
+        <p className="muted">No strategies yet â€” create one above.</p>
       ) : (
         <table>
           <thead>
@@ -292,7 +344,7 @@ function Strategies({ notify }) {
                   <tr>
                     <td colSpan={6}>
                       {perfLoading ? (
-                        <p className="muted">Loading performance…</p>
+                        <p className="muted">Loading performanceâ€¦</p>
                       ) : performance && performance.tradeCount > 0 ? (
                         <div style={{ padding: "8px 0" }}>
                           <div className="stats-row" style={{ marginBottom: 12 }}>
@@ -328,7 +380,7 @@ function Strategies({ notify }) {
                         </div>
                       ) : (
                         <p className="muted">
-                          No buys yet — it'll execute automatically once its condition is met.
+                          No buys yet â€” it'll execute automatically once its condition is met.
                         </p>
                       )}
                     </td>
@@ -342,5 +394,5 @@ function Strategies({ notify }) {
     </div>
   );
 }
-
+ 
 export default Strategies;
